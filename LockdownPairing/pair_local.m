@@ -9,10 +9,17 @@
 
 static void restart_lockdownd(void) {
     pid_t pid;
-    const char *argv[] = {"killall", "-9", "lockdownd", NULL};
-    posix_spawnp(&pid, "killall", NULL, NULL, (char *const *)argv, NULL);
-    int status;
-    waitpid(pid, &status, 0);
+    const char *argv1[] = {"launchctl", "kickstart", "-k", "system/com.apple.mobile.lockdown", NULL};
+    if (posix_spawnp(&pid, "launchctl", NULL, NULL, (char *const *)argv1, NULL) == 0) {
+        int status;
+        waitpid(pid, &status, 0);
+        return;
+    }
+    const char *argv2[] = {"killall", "-9", "lockdownd", NULL};
+    if (posix_spawnp(&pid, "killall", NULL, NULL, (char *const *)argv2, NULL) == 0) {
+        int status;
+        waitpid(pid, &status, 0);
+    }
 }
 
 #pragma mark - Dynamic Bootstrap Resolution
@@ -251,48 +258,35 @@ int main(int argc, const char * argv[]) {
                 [@{ @"enabled": @NO } writeToFile:prefPath atomically:YES];
                 chmod([prefPath UTF8String], 0644);
                 restart_lockdownd();
-                printf("====================================================\n");
-                printf("  [🔒 BẢO VỆ AN TOÀN] Lockdown Pairing Hook: ĐÃ TẮT 🔴\n");
-                printf("====================================================\n");
-                printf("  • lockdownd đã trở về trạng thái nguyên bản 100%% của Apple.\n");
-                printf("  • Mọi cơ chế kiểm tra USB, PID và mạng đã được bật lại hoàn toàn.\n");
-                printf("  • Cáp USB và bảo mật hệ thống hoạt động bình thường.\n\n");
+                printf("[+] Lockdown pairing hook disabled.\n");
+                printf("[*] Restored stock Apple lockdownd behavior and USB security.\n");
                 return 0;
             } else if ([arg isEqualToString:@"on"] || [arg isEqualToString:@"--on"] || [arg isEqualToString:@"enable"]) {
                 [@{ @"enabled": @YES } writeToFile:prefPath atomically:YES];
                 chmod([prefPath UTF8String], 0644);
                 restart_lockdownd();
-                printf("====================================================\n");
-                printf("  [⚡ KÍCH HOẠT] Lockdown Pairing Hook: ĐÃ BẬT 🟢\n");
-                printf("====================================================\n");
-                printf("  • lockdownd sẵn sàng cho ghép đôi nội bộ và SideStore kết nối.\n\n");
+                printf("[+] Lockdown pairing hook enabled.\n");
                 return 0;
             } else if ([arg isEqualToString:@"status"] || [arg isEqualToString:@"--status"]) {
                 NSDictionary *pref = [NSDictionary dictionaryWithContentsOfFile:prefPath];
                 BOOL isEnabled = (pref && pref[@"enabled"] != nil) ? [pref[@"enabled"] boolValue] : YES;
-                printf("====================================================\n");
-                printf("  Lockdown Pairing Hook Status: %s\n", isEnabled ? "ĐANG BẬT 🟢 (Active)" : "ĐANG TẮT 🔴 (Safe/Vanilla)");
-                printf("====================================================\n");
-                printf("  Cách dùng toggle:\n");
-                printf("    pair-local off     -> Tắt hook (khóa an toàn)\n");
-                printf("    pair-local on      -> Bật hook (khi cần ghép đôi)\n");
-                printf("    pair-local status  -> Kiểm tra trạng thái\n\n");
+                printf("Lockdown pairing hook: %s\n", isEnabled ? "enabled" : "disabled");
                 return 0;
             } else if ([arg isEqualToString:@"-h"] || [arg isEqualToString:@"--help"] || [arg isEqualToString:@"help"]) {
-                printf("Usage: pair-local [COMMAND]\n");
+                printf("Usage: pair-local [command]\n\n");
                 printf("Commands:\n");
-                printf("  (không tham số)  Tự động ghép đôi và nạp pairing file vào SideStore/LiveContainer\n");
-                printf("  on               Bật tweak hook\n");
-                printf("  off              Tắt tweak hook (khôi phục lockdownd nguyên bản của Apple)\n");
-                printf("  status           Kiểm tra trạng thái BẬT/TẮT hiện tại\n\n");
+                printf("  (none)   Pair locally and inject pairing record into SideStore / LiveContainer\n");
+                printf("  on       Enable tweak hook\n");
+                printf("  off      Disable tweak hook (restores stock Apple lockdownd)\n");
+                printf("  status   Show current tweak status\n\n");
                 return 0;
             }
         }
 
-        // Đảm bảo hook đang bật trước khi chạy pair
+        // Ensure hook is enabled before pairing
         NSDictionary *curPref = [NSDictionary dictionaryWithContentsOfFile:prefPath];
         if (curPref && curPref[@"enabled"] != nil && ![curPref[@"enabled"] boolValue]) {
-            printf("[i] Tweak hiện đang TẮT. Đang tự động bật tạm thời để ghép đôi...\n");
+            printf("[*] Tweak is currently disabled. Temporarily enabling for pairing...\n");
             [@{ @"enabled": @YES } writeToFile:prefPath atomically:YES];
             chmod([prefPath UTF8String], 0644);
             restart_lockdownd();
@@ -300,16 +294,15 @@ int main(int argc, const char * argv[]) {
         }
 
         printf("====================================================\n");
-        printf("  Lockdown Native Pairing Tool (libimobiledevice)   \n");
+        printf("Lockdown Local Pairing Tool\n");
         printf("====================================================\n");
 
         if (!init_openssl()) {
-            printf("[-] Không thể tải thư viện OpenSSL (libcrypto.3.dylib)!\n");
+            printf("[-] Failed to load OpenSSL (libcrypto.3.dylib).\n");
             return 1;
         }
-        printf("[+] Khởi tạo OpenSSL thành công.\n");
 
-        printf("[*] Đang kết nối tới lockdownd trên 127.0.0.1:62078...\n");
+        printf("[*] Connecting to lockdownd (127.0.0.1:62078)...\n");
         int fd = -1;
         NSDictionary *resp = nil;
         for (int attempt = 1; attempt <= 5; attempt++) {
@@ -333,22 +326,21 @@ int main(int argc, const char * argv[]) {
                     break;
                 }
             }
-            usleep(300000); // Đợi 300ms nếu lockdownd đang khởi động
+            usleep(300000);
         }
 
         if (!resp || !resp[@"Type"]) {
-            printf("[-] Không nhận được phản hồi từ lockdownd! Vui lòng thử lại hoặc respring thiết bị.\n");
+            printf("[-] Failed to connect to lockdownd.\n");
             if (fd >= 0) close(fd);
             return 1;
         }
-        printf("[+] Kết nối thành công!\n");
-        printf("[+] lockdownd Type: %s\n", [resp[@"Type"] UTF8String]);
+        printf("[+] Connected to lockdownd (%s).\n", [resp[@"Type"] UTF8String]);
 
-        // 2. get uidid & WiFiAddress & DevicePublicKey
+        // 2. Query device info
         send_plist(fd, @{@"Request": @"GetValue", @"Key": @"UniqueDeviceID"});
         NSDictionary *respUDID = recv_plist(fd);
         NSString *udid = respUDID[@"Value"] ?: @"22f82ce5bd377b75035be2458585bbfbb8d189ca";
-        printf("[+] device UDID: %s\n", [udid UTF8String]);
+        printf("[+] Device UDID: %s\n", [udid UTF8String]);
 
         send_plist(fd, @{@"Request": @"GetValue", @"Key": @"WiFiAddress"});
         NSDictionary *respMAC = recv_plist(fd);
@@ -356,7 +348,7 @@ int main(int argc, const char * argv[]) {
         printf("[+] Wi-Fi MAC: %s\n", [wifiMAC UTF8String]);
 
         // 3. Sinh Root CA & Host Certificate theo chuẩn libimobiledevice
-        printf("[*] Đang sinh cặp khóa RSA 2048-bit và chứng chỉ Root/Host (chuẩn libimobiledevice)...\n");
+        printf("[*] Generating RSA 2048-bit keys and X.509 v3 certificates...\n");
 
         BIGNUM *e = p_BN_new();
         p_BN_set_word(e, 65537);
@@ -470,42 +462,41 @@ int main(int argc, const char * argv[]) {
 
                 p_X509_free(dev_cert);
                 p_EVP_PKEY_free(dev_pkey);
-                printf("[+] generation success(len=%lu)!\n", (unsigned long)deviceCertData.length);
             }
         }
 
         p_ASN1_TIME_free(tm_before);
         p_ASN1_TIME_free(tm_after);
-        if (fd >= 0) close(fd); // Đóng connection lấy info
-
-        printf("[*] rootCertData len=%lu, hostCertData len=%lu, rootKey len=%lu, hostKey len=%lu\n",
-               (unsigned long)rootCertData.length, (unsigned long)hostCertData.length,
-               (unsigned long)rootKeyData.length, (unsigned long)hostKeyData.length);
+        if (fd >= 0) close(fd); // Close initial query socket
 
         NSString *hostID = [[NSUUID UUID] UUIDString];
         NSString *systemBUID = [[NSUUID UUID] UUIDString];
 
-        // 4. create Pair Request 
-        NSDictionary *pairRecord = @{
+        // 4. Create Pair Request
+        NSMutableDictionary *pairRecord = [NSMutableDictionary dictionaryWithDictionary:@{
             @"DeviceCertificate": deviceCertData,
             @"HostCertificate": hostCertData,
             @"HostID": hostID,
             @"RootCertificate": rootCertData,
             @"SystemBUID": systemBUID
-        };
+        }];
+        if (devPKData) {
+            pairRecord[@"DevicePublicKey"] = devPKData;
+        }
 
         NSDictionary *pairRequest = @{
             @"Label": @"idevicepair",
             @"Request": @"Pair",
             @"ProtocolVersion": @"2",
-            @"HostName": @"iPhone",
             @"PairRecord": pairRecord,
             @"PairingOptions": @{
                 @"ExtendedPairingErrors": @YES
             }
         };
 
-        // open new socket
+        // Small delay before opening handshake socket
+        usleep(500000); // 500ms delay
+
         int fdPair = -1;
         for (int attempt = 1; attempt <= 3; attempt++) {
             if (fdPair >= 0) close(fdPair);
@@ -526,22 +517,28 @@ int main(int argc, const char * argv[]) {
             usleep(200000);
         }
 
-        printf("[*] (Pair Request) to lockdownd...\n");
+        printf("[*] Sending pair request...\n");
         send_plist(fdPair, pairRequest);
 
         NSData *escrowBag = nil;
+        BOOL promptShown = NO;
+        int maxAttempts = 30; // 30 * 2s = 60s max wait for trust dialog
+        int currentAttempt = 0;
 
         while (1) {
             NSDictionary *pairResp = recv_plist(fdPair);
             if (!pairResp) {
-                printf("[-] Mất kết nối tới lockdownd!\n");
+                printf("\nERROR: Connection closed by lockdownd.\n");
                 if (fdPair >= 0) close(fdPair);
                 return 1;
             }
 
             NSString *error = pairResp[@"Error"];
             if (!error) {
-                printf("\n[🎉 BẮT TAY THÀNH CÔNG] lockdownd đã chấp nhận ghép đôi!\n");
+                if (promptShown) {
+                    printf("\n[+] Trust confirmed. Passcode verified.\n");
+                }
+                printf("SUCCESS: Paired with device %s\n", [udid UTF8String]);
                 escrowBag = pairResp[@"EscrowBag"];
                 if (pairResp[@"DeviceCertificate"]) {
                     deviceCertData = pairResp[@"DeviceCertificate"];
@@ -550,20 +547,34 @@ int main(int argc, const char * argv[]) {
             }
 
             if ([error isEqualToString:@"PasswordProtected"] || [error isEqualToString:@"PairingDialogResponsePending"]) {
-                printf("\n[⚠️ VUI LÒNG MỞ MÀN HÌNH iPHONE]");
-                printf("\n -> Bấm \"Tin cậy\" (Trust) và NHẬP PASSCODE màn hình khóa...");
+                if (!promptShown) {
+                    printf("Please accept the trust dialog on the screen of device %s and enter passcode...\n", [udid UTF8String]);
+                    fflush(stdout);
+                    promptShown = YES;
+                }
+                currentAttempt++;
+                if (currentAttempt > maxAttempts) {
+                    printf("\nERROR: Pairing timed out waiting for user confirmation.\n");
+                    if (fdPair >= 0) close(fdPair);
+                    return 1;
+                }
+                printf(".");
                 fflush(stdout);
-                sleep(3);
+                sleep(2); // 2 second delay between checks (libimobiledevice standard)
                 send_plist(fdPair, pairRequest);
+            } else if ([error isEqualToString:@"UserDeniedPairing"]) {
+                printf("\nERROR: Device %s refused to pair (user denied pairing).\n", [udid UTF8String]);
+                if (fdPair >= 0) close(fdPair);
+                return 1;
             } else {
-                printf("[-] Lỗi từ lockdownd: %s\n", [[pairResp description] UTF8String]);
+                printf("\nERROR: Pairing failed: %s\n", [[pairResp description] UTF8String]);
                 if (fdPair >= 0) close(fdPair);
                 return 1;
             }
         }
         close(fdPair);
 
-        // 5. Đóng gói đầy đủ 10 trường vào Pairing Record
+        // 5. Serialize Pairing Record
         NSMutableDictionary *finalRecord = [NSMutableDictionary dictionaryWithDictionary:@{
             @"DeviceCertificate": deviceCertData ?: hostCertData,
             @"HostCertificate": hostCertData,
@@ -582,28 +593,25 @@ int main(int argc, const char * argv[]) {
         NSError *plistErr = nil;
         NSData *plistData = [NSPropertyListSerialization dataWithPropertyList:finalRecord format:NSPropertyListXMLFormat_v1_0 options:0 error:&plistErr];
         if (!plistData) {
-            printf("[-] ERROR serialize plist: %s\n", [[plistErr localizedDescription] UTF8String]);
+            printf("[-] Failed to serialize pairing plist: %s\n", [[plistErr localizedDescription] UTF8String]);
+            return 1;
         }
 
         NSArray<NSString *> *outPaths = @[
             [NSString stringWithFormat:@"/var/mobile/Documents/%@.plist", udid],
             @"/var/mobile/Documents/PairingFile_Lockdown.plist",
-            [NSString stringWithFormat:@"/var/mobile/%@.plist", udid],
-            [NSString stringWithFormat:@"%@.plist", udid]
+            [NSString stringWithFormat:@"/var/mobile/%@.plist", udid]
         ];
 
-        printf("\n====================================================\n");
-        printf("[SUCCESS] CREATED PAIRING FILE:\n");
+        printf("[+] Pairing record generated:\n");
         for (NSString *p in outPaths) {
             BOOL written = [plistData writeToFile:p atomically:YES];
             chmod([p UTF8String], 0644);
-            printf("  - %s (written=%d)\n", [p UTF8String], written);
+            printf("  - %s (%s)\n", [p UTF8String], written ? "ok" : "failed");
         }
-        printf("====================================================\n");
-        printf("Định dạng hoàn toàn khớp 100%% với libimobiledevice và tương thích SideStore / Jitterbug!\n");
 
-        // 6. Tự động tìm và ghi trực tiếp vào container của SideStore & LiveContainer
-        printf("\n[*] Đang quét và tự động nạp pairing file vào container SideStore / LiveContainer...\n");
+        // 6. Auto-inject into SideStore / LiveContainer app containers
+        printf("[*] Searching for SideStore and LiveContainer containers...\n");
         NSString *containersDir = @"/private/var/mobile/Containers/Data/Application";
         NSFileManager *fm = [NSFileManager defaultManager];
         NSArray<NSString *> *uuids = [fm contentsOfDirectoryAtPath:containersDir error:nil];
@@ -633,23 +641,15 @@ int main(int argc, const char * argv[]) {
                             [plistData writeToFile:fpath atomically:YES];
                             chmod([fpath UTF8String], 0644);
                         }
-                        printf("  [✓] Đã nạp trực tiếp vào: %s\n", [bid UTF8String]);
+                        printf("  [+] Injected into: %s\n", [bid UTF8String]);
                         injectedCount++;
                     }
                 }
             }
         }
         if (injectedCount > 0) {
-            printf("[+] Đã tự động thiết lập cho %d ứng dụng SideStore/LiveContainer! (Không cần import thủ công)\n", injectedCount);
+            printf("[+] Successfully configured %d app container(s).\n", injectedCount);
         }
-
-        printf("\n====================================================\n");
-        printf("  [💡 MẸO BẢO MẬT]\n");
-        printf("  Sau khi SideStore/LiveContainer nhận pairing file thành công:\n");
-        printf("  Bạn có thể chạy lệnh sau bất cứ lúc nào để khóa an toàn:\n");
-        printf("      pair-local off\n");
-        printf("  (Tắt hook và khôi phục 100%% bảo mật mặc định của Apple)\n");
-        printf("====================================================\n\n");
 
         p_X509_free(host_cert);
         p_X509_free(root_cert);

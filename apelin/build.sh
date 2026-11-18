@@ -66,7 +66,7 @@ Description: Pair iOS locally without a computer for SideStore and Jitterbug
 Maintainer: Developer
 Author: Developer
 Section: Tweaks
-Depends: mobilesubstrate, ellekit
+Depends: mobilesubstrate, ellekit, preferenceloader
 EOF
 
 cat << 'EOF' > "$debian_dir/postinst"

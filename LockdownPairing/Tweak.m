@@ -7,23 +7,28 @@
 #import <dlfcn.h>
 #import <os/log.h>
 #import <Security/Security.h>
+#import <notify.h>
 
 // MobileSubstrate / ElleKit Hook Function Pointer
 typedef void (*MSHookFunction_t)(void *symbol, void *hook, void **old);
 static MSHookFunction_t MSHookFunction_p = NULL;
 static uint8_t *g_usb_connected_ptr = NULL;
+static int g_notify_token = 0;
 
 static BOOL is_tweak_enabled(void) {
     static BOOL cached_val = YES;
     static time_t last_check = 0;
     time_t now = time(NULL);
-    if (now - last_check >= 1) { // Kiểm tra mỗi giây 1 lần
+    if (now - last_check >= 1) { // Poll every second as fallback
         last_check = now;
         NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.lockdown.localpairing.plist"];
         if (dict && dict[@"enabled"] != nil) {
             cached_val = [dict[@"enabled"] boolValue];
         } else {
             cached_val = YES;
+        }
+        if (g_usb_connected_ptr) {
+            *g_usb_connected_ptr = cached_val ? 1 : 0;
         }
     }
     return cached_val;
@@ -288,4 +293,14 @@ static void init(void) {
     void *target_dp = (void *)(0x10000e6e4 + slide);
     MSHookFunction_p(target_dp, (void *)&my_decode_pem, (void **)&orig_decode_pem);
     log_to_file("[LockdownPairing] Hooked decode_pem at %p successfully!", target_dp);
+
+    // Darwin notification listener for PreferenceLoader / Settings changes
+    notify_register_dispatch("com.lockdown.localpairing/changed", &g_notify_token, dispatch_get_main_queue(), ^(int token) {
+        NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.lockdown.localpairing.plist"];
+        BOOL enabled = (dict && dict[@"enabled"] != nil) ? [dict[@"enabled"] boolValue] : YES;
+        if (g_usb_connected_ptr) {
+            *g_usb_connected_ptr = enabled ? 1 : 0;
+        }
+        log_to_file("[LockdownPairing] PreferenceLoader toggle changed: enabled=%d", enabled);
+    });
 }
