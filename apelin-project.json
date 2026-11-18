@@ -3,7 +3,7 @@
   "projectID": "7b3c9369-4dbc-44fe-9de3-6ddbd9d51347",
   "kind": "workspace",
   "buildSystem": "external",
-  "displayName": "Lockdown Local Pairing",
+  "displayName": "pairer (Lockdown Local Pairing)",
   "autoName": false,
   "external": {
     "script": "apelin/build.sh",
