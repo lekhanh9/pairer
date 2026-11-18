@@ -13,7 +13,24 @@ typedef void (*MSHookFunction_t)(void *symbol, void *hook, void **old);
 static MSHookFunction_t MSHookFunction_p = NULL;
 static uint8_t *g_usb_connected_ptr = NULL;
 
+static BOOL is_tweak_enabled(void) {
+    static BOOL cached_val = YES;
+    static time_t last_check = 0;
+    time_t now = time(NULL);
+    if (now - last_check >= 1) { // Kiểm tra mỗi giây 1 lần
+        last_check = now;
+        NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.lockdown.localpairing.plist"];
+        if (dict && dict[@"enabled"] != nil) {
+            cached_val = [dict[@"enabled"] boolValue];
+        } else {
+            cached_val = YES;
+        }
+    }
+    return cached_val;
+}
+
 static void log_to_file(const char *fmt, ...) {
+    if (!is_tweak_enabled()) return;
     va_list args;
     va_start(args, fmt);
     char buf[1024];
@@ -21,17 +38,16 @@ static void log_to_file(const char *fmt, ...) {
     va_end(args);
 
     os_log(OS_LOG_DEFAULT, "%{public}s", buf);
-    FILE *f = fopen("/tmp/lockdown_ssl.log", "a");
-    if (f) {
-        fprintf(f, "%s\n", buf);
-        fclose(f);
-    }
 }
 
 #pragma mark - Hook 1: Bypass peer_is_safe (getsockopt)
 static int (*orig_getsockopt)(int socket, int level, int option_name, void *restrict option_value, socklen_t *restrict option_len) = NULL;
 
 static int my_getsockopt(int socket, int level, int option_name, void *restrict option_value, socklen_t *restrict option_len) {
+    if (!is_tweak_enabled()) {
+        if (orig_getsockopt) return orig_getsockopt(socket, level, option_name, option_value, option_len);
+        return 0;
+    }
     if (level == 6 /* IPPROTO_TCP */ && option_name == 0x204 /* TCP_CONNECTION_INFO / peer PID */) {
         if (option_value && option_len && *option_len >= sizeof(uint32_t)) {
             *(uint32_t *)option_value = 0; // Luôn trả về PID 0 (kernel / an toàn)
@@ -48,6 +64,9 @@ static int my_getsockopt(int socket, int level, int option_name, void *restrict 
 static int (*orig_get_transport_type)(void *conn) = NULL;
 
 static int my_get_transport_type(void *conn) {
+    if (!is_tweak_enabled()) {
+        return orig_get_transport_type ? orig_get_transport_type(conn) : 4;
+    }
     int orig = orig_get_transport_type ? orig_get_transport_type(conn) : 4;
     log_to_file("[LockdownPairing] get_transport_type(%p) called, orig=%d -> returning 1 (USB)", conn, orig);
     if (conn) {
@@ -63,6 +82,9 @@ static int my_get_transport_type(void *conn) {
 static BOOL (*orig_RemotePairingGetUSBConnectedHostTrustState)(void **outError) = NULL;
 
 static BOOL my_RemotePairingGetUSBConnectedHostTrustState(void **outError) {
+    if (!is_tweak_enabled()) {
+        return orig_RemotePairingGetUSBConnectedHostTrustState ? orig_RemotePairingGetUSBConnectedHostTrustState(outError) : NO;
+    }
     log_to_file("[LockdownPairing] RemotePairingGetUSBConnectedHostTrustState called -> returning YES!");
     if (outError) *outError = nil;
     return YES;
@@ -72,6 +94,9 @@ static BOOL my_RemotePairingGetUSBConnectedHostTrustState(void **outError) {
 static int (*orig_handle_pair)(void *session, void *req, void *req_name, int is_wireless, void *arg4) = NULL;
 
 static int my_handle_pair(void *session, void *req, void *req_name, int is_wireless, void *arg4) {
+    if (!is_tweak_enabled()) {
+        return orig_handle_pair ? orig_handle_pair(session, req, req_name, is_wireless, arg4) : -1;
+    }
     log_to_file("[LockdownPairing] handle_pair called! session=%p, req=%p, is_wireless=%d", session, req, is_wireless);
     if (session) {
         *(uint64_t *)((uintptr_t)session + 0x20) = 0;
@@ -86,6 +111,9 @@ static int my_handle_pair(void *session, void *req, void *req_name, int is_wirel
 static int (*orig_check_bool_pref)(void *a0, void *a1, void *a2) = NULL;
 
 static int my_check_bool_pref(void *a0, void *a1, void *a2) {
+    if (!is_tweak_enabled()) {
+        return orig_check_bool_pref ? orig_check_bool_pref(a0, a1, a2) : 0;
+    }
     log_to_file("[LockdownPairing] check_bool_pref called for key %p -> returning 1 (ENABLED)", a1);
     return 1; // Always allow WiFi / VPN connections!
 }
@@ -94,14 +122,19 @@ static int my_check_bool_pref(void *a0, void *a1, void *a2) {
 static OSStatus (*orig_ssl_handshake)(SSLContextRef ctx) = NULL;
 
 static OSStatus my_ssl_handshake(SSLContextRef ctx) {
-    OSStatus res = orig_ssl_handshake(ctx);
-    log_to_file("[LockdownPairing] GOT my_ssl_handshake(%p) returned %d (0x%x)", ctx, (int)res, (unsigned int)res);
+    OSStatus res = orig_ssl_handshake ? orig_ssl_handshake(ctx) : errSecSuccess;
+    if (is_tweak_enabled()) {
+        log_to_file("[LockdownPairing] GOT my_ssl_handshake(%p) returned %d (0x%x)", ctx, (int)res, (unsigned int)res);
+    }
     return res;
 }
 
 static BOOL (*orig_trust_eval)(SecTrustRef trust, CFErrorRef *error) = NULL;
 
 static BOOL my_trust_eval(SecTrustRef trust, CFErrorRef *error) {
+    if (!is_tweak_enabled()) {
+        return orig_trust_eval ? orig_trust_eval(trust, error) : NO;
+    }
     BOOL ok = orig_trust_eval ? orig_trust_eval(trust, error) : YES;
     log_to_file("[LockdownPairing] GOT my_trust_eval(%p) returned %d, forcing YES", trust, ok);
     if (error) *error = NULL;
@@ -113,6 +146,9 @@ static NSDictionary *(*orig_load_pair_record)(CFStringRef host_id) = NULL;
 
 static NSDictionary *my_load_pair_record(CFStringRef host_id) {
     NSDictionary *dict = orig_load_pair_record ? orig_load_pair_record(host_id) : nil;
+    if (!is_tweak_enabled()) {
+        return dict;
+    }
     log_to_file("[LockdownPairing] load_pair_record(%@) -> %p", host_id, dict);
     if (dict) {
         NSMutableDictionary *m = [dict mutableCopy];
@@ -136,6 +172,9 @@ static CFDataRef (*orig_decode_pem)(CFDataRef pem, const char *tag) = NULL;
 
 static CFDataRef my_decode_pem(CFDataRef pem, const char *tag) {
     CFDataRef ret = orig_decode_pem ? orig_decode_pem(pem, tag) : NULL;
+    if (!is_tweak_enabled()) {
+        return ret;
+    }
     if (!ret && pem && tag) {
         const UInt8 *bytes = CFDataGetBytePtr(pem);
         CFIndex len = CFDataGetLength(pem);
@@ -196,9 +235,11 @@ static void init(void) {
     intptr_t slide = _dyld_get_image_vmaddr_slide(img_idx);
     log_to_file("[LockdownPairing] lockdownd image index: %u, slide: 0x%lx", img_idx, (long)slide);
 
-    // Force g_usb_connected = 1 (at 0x10010d880 + slide)
+    // Force g_usb_connected = 1 (at 0x10010d880 + slide) nếu bật tweak
     g_usb_connected_ptr = (uint8_t *)(0x10010d880 + slide);
-    *g_usb_connected_ptr = 1;
+    if (is_tweak_enabled()) {
+        *g_usb_connected_ptr = 1;
+    }
 
     // Hook 1: getsockopt qua direct GOT patch tại 0x1000ecc10 + slide
     void *got_getsockopt = (void *)(0x1000ecc10 + slide);

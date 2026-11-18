@@ -20,6 +20,7 @@ dpkg -i com.lockdown.localpairing_1.0.0_iphoneos-arm64e.deb
 
 ## Usage
 
+### Pairing
 Simply run in any terminal (NewTerm, Filza Terminal, or SSH):
 ```bash
 pair-local
@@ -34,6 +35,15 @@ The tool will:
 4. Execute `Pair` request and obtain `EscrowBag`
 5. Generate the complete 10-field `<UDID>.plist`
 6. Automatically inject `pairingFile.plist` into SideStore/LiveContainer containers
+
+### Security Toggle (On / Off / Status)
+To protect system security and restore stock Apple `lockdownd` behavior when not pairing:
+```bash
+pair-local off     # Disables the tweak hook, restoring 100% vanilla lockdownd security
+pair-local on      # Re-enables the tweak hook for pairing
+pair-local status  # Checks current hook status
+```
+Alternatively, toggle it anytime from **Settings ▸ Lockdown Pairing**.
 
 ## License
 

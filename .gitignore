@@ -20,3 +20,6 @@ PairingFile_Lockdown.plist
 LockdownPairing/pair_local
 LockdownPairing/*.plist
 !LockdownPairing/LockdownPairing.plist
+!LockdownPairing/LockdownPairingPrefs.plist
+pair_out.txt
+*.plist

@@ -40,12 +40,14 @@ ldid -S"$APELIN_PROJECT_ROOT/LockdownPairing/Tool.entitlements" "$TMPDIR/build/p
 
 tweak_dir="$stage$APELIN_PREFIX/Library/MobileSubstrate/DynamicLibraries"
 bin_dir="$stage$APELIN_PREFIX/usr/bin"
+pref_dir="$stage$APELIN_PREFIX/Library/PreferenceLoader/Preferences"
 debian_dir="$stage/DEBIAN"
 
-mkdir -p "$tweak_dir" "$bin_dir" "$debian_dir"
+mkdir -p "$tweak_dir" "$bin_dir" "$pref_dir" "$debian_dir"
 
 cp "$TMPDIR/build/LockdownPairing.dylib" "$tweak_dir/LockdownPairing.dylib"
 cp "$APELIN_PROJECT_ROOT/LockdownPairing/LockdownPairing.plist" "$tweak_dir/LockdownPairing.plist"
+cp "$APELIN_PROJECT_ROOT/LockdownPairing/LockdownPairingPrefs.plist" "$pref_dir/LockdownPairing.plist"
 
 if [ "$APELIN_BOOTSTRAP" = "roothide" ]; then
     ln -s /usr/lib/DynamicPatches/AutoPatches.dylib "$tweak_dir/LockdownPairing.dylib.roothidepatch"
